@@ -1,150 +1,412 @@
+def scan_type
+def target
 pipeline {
     options {
-        buildDiscarder(logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '1', numToKeepStr: '1'))
+        buildDiscarder logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '1', numToKeepStr: '1')
     }
-    agent { label 'Jenkins_Agent_CL' }
-
+    agent {
+        label 'Jenkins_Agent_CL'
+    }
     parameters {
-        choice(choices: ["owasp_zap", "owasp_nettacker", "wapiti", "nikto", "nuclei", "sqlmap", "testssl", "nmap"], 
-               description: 'Type of main attack and issue detection tool', 
-               name: 'ATTACK_TOOL_TYPE')
-        choice(choices: ["Full", "Baseline", "APIS", "AutoCollectedSubDomains_List", "UserDefinedCatalog"], 
-               description: 'Type of scan that is going to be performed inside the container', 
-               name: 'SCAN_TYPE')
-        string(defaultValue: '', description: 'Target URLs to scan', name: 'NEED_TO_SCAN_VARIABLE', trim: true)
-        string(defaultValue: '', description: 'Subdomains identifier (only for AutoCollectedSubDomains_List)', name: 'SUB_DOMAINS_LOCATER_VARIABLE', trim: true)
-        choice(choices: ["openapi", "soap", "graphql"], description: 'OPTIONAL: API type (openapi, soap, graphql)', name: 'API_TYPE')
-        string(defaultValue: 'from_address@example.com', description: 'Sender email address', name: 'REPORTS_MAIL_SENDER', trim: true)
-        string(defaultValue: 'to_address@example.com', description: 'Recipient email address', name: 'REPORTS_MAIL_RECIPIENT', trim: true)
-        booleanParam(defaultValue: true, description: 'Generate report', name: 'GENERATE_REPORT')
+        choice  choices: ["owazp_zap", "owazp_nettacker", "wapiti", "nikto", "nuclei", "sqlmap", "testssl", "nmap"],
+        description: 'Type of main attcking and issue detection tool',
+        name: 'ATTACK_TOOL_TYPE'
+        
+        choice  choices: ["Full", "Baseline", "APIS", "AutoCollectedSubDomains_List", "UserDefinedCatalog"],
+        description: 'Type of scan that is going to perform inside the container',
+        name: 'SCAN_TYPE'
+        
+        string defaultValue: '',
+        description: 'To be scan URL(s) with parameters or without parameters',
+        name: 'NEED_TO_SCAN_VARIABLE',
+        trim: true
+        
+        string defaultValue: '',
+        description: 'The sun domains identifier and valied when SCAN_TYPE is ussing under AutoCollectedSubDomains_List',
+        name: 'SUB_DOMAINS_LOCATER_VARIABLE',
+        trim: true
+        
+        choice  choices: ["openapi", "soap", "graphql"],
+        description: 'OPTIONAL: Type of openapi, soap, or graphql',
+        name: 'API_TYPE'
+		
+		string defaultValue: 'from_address@example.com',
+        description: 'An email address of the sender',
+        name: 'REPORTS_MAIL_SENDER',
+        trim: true
+		
+		string defaultValue: 'to_address@example.com',
+        description: 'An email address to be send the report',
+        name: 'REPORTS_MAIL_RECIPIENT',
+        trim: true
+        
+        booleanParam defaultValue: true,
+        description: 'Parameter to know if wanna generate report.',
+        name: 'GENERATE_REPORT'
     }
-
+	
     stages {
         stage('Pipeline Info') {
             steps {
                 script {
+                    echo "<--Parameter Initialization-->"
                     echo """
-                    Parameters:
-                    Scan Type: ${params.SCAN_TYPE}
-                    Target URL(s): ${params.NEED_TO_SCAN_VARIABLE}
-                    Generate Report: ${params.GENERATE_REPORT}
+                         The current parameters are:
+                             Scan Type: ${params.SCAN_TYPE}.
+                             Target: ${params.NEED_TO_SCAN_VARIABLE}.
+                             Generate report: ${params.GENERATE_REPORT}.
                     """
                 }
             }
         }
-
-        stage('Setup Environment') {
-            parallel {
-                stage('Download Python Scripts') {
-                    steps {
-                        withCredentials([usernamePassword(credentialsId: 'CL_github_CredID', passwordVariable: 'CL_GL_PW_ID', usernameVariable: 'CL_GL_UN_ID')]) {
-                            script {
-                                sh '''
-                                sudo rm -rf ${WORKSPACE}/*
-                                git clone https://${CL_GL_UN_ID}:${CL_GL_PW_ID}@github.com/cl/pipeline-scripts.git
-                                cd ${WORKSPACE}/pipeline-scripts/
-                                git checkout master
-                                '''
-                            }
-                        }
-                    }
-                }
-                stage('Pull Docker Image') {
-                    steps {
-                        script {
-                            sh '''
-                            echo "Pulling OWASP ZAP container"
-                            sudo docker pull owasp/zap2docker-stable
-                            '''
-                        }
+		
+		stage("Python-Scripts-Download"){
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'CL_github_CredID', passwordVariable: 'CL_GL_PW_ID', usernameVariable: 'CL_GL_UN_ID'), usernamePassword(credentialsId: 'CL_github_TokenID', passwordVariable: 'CL_GL_PW_ID', usernameVariable: 'CL_GL_UN_ID')]) {
+                    script {
+                        sh label: '', script: ''' #!/bin/sh
+						sudo rm -rf ${WORKSPACE}/*
+						git clone https://${CL_GL_UN_ID}:${CL_GL_PW_ID}@github.com/cl/pipeline-scripts.git && cd ${WORKSPACE}/pipeline-scripts/ && sudo git checkout master
+                        '''
                     }
                 }
             }
         }
-
-        stage('Prepare URL(s)') {
+        
+        stage('Need-to-Scan-Url(s)') {
             steps {
                 script {
-                    sh '''
+                    sh label: '', script: '''#!/bin/bash
                     if [ "$SCAN_TYPE" = "AutoCollectedSubDomains_List" ]; then
-                        sudo docker run --rm -v $(pwd):/tmp -v $HOME/.config/subfinder:/root/.config/subfinder -t projectdiscovery/subfinder -d ${SUB_DOMAINS_LOCATER_VARIABLE} -o /tmp/URLS_Metadata_Catalogs_Need_to_Scan.csv
-                    else
-                        echo "${NEED_TO_SCAN_VARIABLE}" > ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv
-                    fi
-                    sed -i '/^$/d' ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv
+						sudo docker run --rm -v $(pwd):/tmp -v $HOME/.config/subfinder:/root/.config/subfinder -t projectdiscovery/subfinder -d ${SUB_DOMAINS_LOCATER_VARIABLE} -o /tmp/URLS_Metadata_Catalogs_Need_to_Scan.csv
+					else
+						echo "Using ${NEED_TO_SCAN_VARIABLE} Variable..."
+						if [ -z "${NEED_TO_SCAN_VARIABLE}" ]
+						then
+							echo "The Blacklist Filenames Variable is empty and continue all are the Repo Scanning.. "
+						else
+							declare -a arr=("$NEED_TO_SCAN_VARIABLE")
+							for FILNE_NAMES in "${arr[@]}"
+							do
+								if [ -z "${FILNE_NAMES}" ]
+								then
+									echo "False:${FILNE_NAMES}"
+								else
+									echo "$FILNE_NAMES" > ${WORKSPACE}/tmp.csv
+									tr -s '[:blank:]' '[\n*]' < ${WORKSPACE}/tmp.csv |
+									while IFS= read -r word; do
+										NEW_URLS_NAMES="$(echo -e "${word}" | tr -d '[[:space:]]')"
+										echo "${NEW_URLS_NAMES}" >> ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv
+									done
+								fi
+							done
+						fi
+					fi
+
+                    echo "-----------------------------------------Only Allowed Repo(s)----------------------------------------------"
+                    echo ""
+					echo "Only Allowed URL(s) Names:"
+					sed -i \'/^$/d\' ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv
                     cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv
+                    echo ""
+                    echo "-----------------------------------------------------------------------------------------------------------"
                     '''
                 }
             }
         }
-
-        stage('Run Scan') {
-            parallel {
-                stage('OWASP ZAP Scan') {
-                    when { expression { params.ATTACK_TOOL_TYPE == 'owasp_zap' } }
-                    steps {
-                        script {
-                            sh '''
-                            sudo docker run --rm -dt --name owasp owasp/zap2docker-stable /bin/bash
-                            cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read url; do
-                                sudo docker exec owasp zap-baseline.py -t ${url} -r report_$(echo $url | awk -F[/:] '{print $4}').html -d -I -j
-                            done
-                            '''
-                        }
-                    }
+        
+        stage('Setting-up-environment') {
+            steps {
+                script {
+                    sh label: '', script: ''' #!/bin/sh
+					if [ "$ATTACK_TOOL_TYPE" = "owazp_zap" ]; then
+						echo "Pulling up last OWASP ZAP container --> Start"
+						sudo docker pull owasp/zap2docker-stable
+						echo "Pulling up last VMS container --> End"
+						echo "Starting container --> Start"
+						sudo docker run --rm -dt --name owasp owasp/zap2docker-stable /bin/bash
+					else
+						echo "Other Tools..."
+					fi
+                    '''
                 }
-                stage('Nuclei Scan') {
-                    when { expression { params.ATTACK_TOOL_TYPE == 'nuclei' } }
-                    steps {
-                        script {
-                            sh '''
-                            cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read url; do
-                                sudo docker run --rm -v $(pwd):/tmp -i projectdiscovery/nuclei -u ${url} -o /tmp/report_$(echo $url | awk -F[/:] '{print $4}').html
-                            done
-                            '''
-                        }
-                    }
-                }
-                // Add other tools (sqlmap, wapiti, etc.) similarly in parallel.
             }
         }
+        
+        stage('Prepare-Working-directory') {
+            when {
+                environment name : 'GENERATE_REPORT', value: 'true'
+            }
+            steps {
+                script {
+                    sh label: '', script: ''' #!/bin/sh
+					if [ "$ATTACK_TOOL_TYPE" = "owazp_zap" ]; then
+						sudo docker exec owasp mkdir /zap/wrk
+					else
+						echo "Other Tools..."
+					fi
+                    '''
+                }
+            }
+        }
+        
+        stage('Penitration-Testing-Process'){
+            steps {
+                script {
+                    scan_type = "${params.SCAN_TYPE}"
+                    echo "----> scan_type: $scan_type"
+                    sh label: '', script: ''' #!/bin/sh
+					if [ "$ATTACK_TOOL_TYPE" = "owazp_zap" ]; then
+						if [ "$SCAN_TYPE" = "Baseline" ]; then
+							cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read SINGLE_LINE_READ; do
+								sudo free && sudo sync && sudo echo 3 > /proc/sys/vm/drop_caches && sudo free > /dev/null 2>&1
+								FQDN_ONLY=$(echo ${SINGLE_LINE_READ} | awk -F[/:] '{print $4}')
+								#ALERT_NUM=$(sudo docker exec owasp zap-baseline.py -t ${SINGLE_LINE_READ} -r report_${FQDN_ONLY}.html -d -I -j -m 10 -T 60)
+								ALERT_NUM=$(sudo docker exec owasp zap-baseline.py -t ${SINGLE_LINE_READ} -r report_${FQDN_ONLY}.html -d -I -j)
+								echo ${ALERT_NUM} >> ${WORKSPACE}/ALERT_NUM.csv
+							done
 
-        stage('Upload Reports to Nexus') {
-            when { expression { params.GENERATE_REPORT } }
+						elif [ "$SCAN_TYPE" = "APIS" ]; then
+							cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read SINGLE_LINE_READ; do
+								sudo free && sudo sync && sudo echo 3 > /proc/sys/vm/drop_caches && sudo free > /dev/null 2>&1
+								FQDN_ONLY=$(echo ${SINGLE_LINE_READ} | awk -F[/:] '{print $4}')
+								#ALERT_NUM=$(sudo docker exec owasp zap-api-scan.py -t ${SINGLE_LINE_READ} -r report_${FQDN_ONLY}.html -f ${API_TYPE} -d -I -j -m 10 -T 90)
+								ALERT_NUM=$(sudo docker exec owasp zap-api-scan.py -t ${SINGLE_LINE_READ} -r report_${FQDN_ONLY}.html -f ${API_TYPE} -d -I -j)
+								echo ${ALERT_NUM} >> ${WORKSPACE}/ALERT_NUM.csv
+							done
+
+						elif [ "$SCAN_TYPE" = "Full" ]; then
+							cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read SINGLE_LINE_READ; do
+								sudo free && sudo sync && sudo echo 3 > /proc/sys/vm/drop_caches && sudo free > /dev/null 2>&1
+								FQDN_ONLY=$(echo ${SINGLE_LINE_READ} | awk -F[/:] '{print $4}')
+								#ALERT_NUM=$(sudo docker exec owasp zap-full-scan.py -t ${SINGLE_LINE_READ} -r report_${FQDN_ONLY}.html -d -I -j -m 10 -T 120)
+								ALERT_NUM=$(sudo docker exec owasp zap-full-scan.py -t ${SINGLE_LINE_READ} -r report_${FQDN_ONLY}.html -d -I -j -a)
+								echo ${ALERT_NUM} >> ${WORKSPACE}/ALERT_NUM.csv
+								sleep 30
+							done
+						else
+							echo "Something went wrong..."
+						fi
+
+					elif [ "$ATTACK_TOOL_TYPE" = "nikto" ]; then
+						#git clone https://github.com/sullo/nikto.git && cd nikto && sudo docker build --no-cache -t sullo/nikto .
+						cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read SINGLE_LINE_READ; do
+							FQDN_ONLY=$(echo ${SINGLE_LINE_READ} | awk -F[/:] '{print $4}')
+							ALERT_NUM=$(sudo docker run -i --rm -v $(pwd):/tmp frapsoft/nikto -h ${SINGLE_LINE_READ} -C all -Display 3 -Format htm -o /tmp/report_${FQDN_ONLY}.html)
+							echo ${ALERT_NUM} >> ${WORKSPACE}/ALERT_NUM.csv
+							sleep 5
+						done
+
+					elif [ "$ATTACK_TOOL_TYPE" = "sqlmap" ]; then
+						cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read SINGLE_LINE_READ; do
+							FQDN_ONLY=$(echo ${SINGLE_LINE_READ} | awk -F[/:] '{print $4}')
+							ALERT_NUM=$(sudo docker run -i --rm --privileged=true -v $PWD/sqlmapdata:/home/sqlmap/.sqlmap:rw ilyaglow/sqlmap -u ${SINGLE_LINE_READ} --dbs --tables --columns --random-agent --string --regexp --level=3 --risk=3 --threads 5 tamper=apostrophemask,apostrophenullencode,base64encode,between,chardoubleencode,charencode,charunicodeencode,equaltolike,greatest,ifnull2ifisnull,multiplespaces,nonrecursivereplacement,percentage,randomcase,securesphere,space2comment,space2plus,space2randomblank,unionalltounion,unmagicquotes --dump --answers="keep testing=Y,sitemap=Y,skip further tests=N")
+							echo ${ALERT_NUM} >> ${WORKSPACE}/ALERT_NUM.csv
+							sleep 10
+						done
+
+					elif [ "$ATTACK_TOOL_TYPE" = "nmap" ]; then
+						#git clone https://github.com/MTES-MCT/nmap-docker.git && cd nmap-docker && sudo docker build -t tristanrobert/nmap-docker:latest .
+						cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read SINGLE_LINE_READ; do
+							FQDN_ONLY=$(echo ${SINGLE_LINE_READ} | awk -F[/:] '{print $4}')
+							ALERT_NUM=$(sudo docker run -v "$(pwd)":/data tristanrobert/nmap-docker:latest report_${FQDN_ONLY} ${FQDN_ONLY} true)
+							echo ${ALERT_NUM} >> ${WORKSPACE}/ALERT_NUM.csv
+							sleep 5
+						done
+
+					elif [ "$ATTACK_TOOL_TYPE" = "owazp_nettacker" ]; then
+						PROFILE="all"
+						METHOD="all"
+						RETRY_VAL="4"
+						PARALLEL_THREADS_VAL="10"
+						git clone https://github.com/OWASP/Nettacker.git  && cd Nettacker
+
+						cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read SINGLE_LINE_READ; do
+							FQDN_ONLY=$(echo ${SINGLE_LINE_READ} | awk -F[/:] '{print $4}')
+							ALERT_NUM=$(cd ${WORKSPACE}/Nettacker && sudo docker run --rm -e "WORKSPACE=${PWD}" -v $PWD:/usr/src/owaspnettacker -v $(pwd):/usr/src/owaspnettacker/.data/results -p 5000:5000 nwclasantha/nettacker_nettacker python nettacker.py -i ${FQDN_ONLY} -m ${METHOD} --profile ${PROFILE} -t ${PARALLEL_THREADS_VAL} --retries ${RETRY_VAL} -o /usr/src/owaspnettacker/.data/results/report_${FQDN_ONLY}.html)
+							mv ${WORKSPACE}/Nettacker/report_${FQDN_ONLY}.html ${WORKSPACE}/
+							echo ${ALERT_NUM} >> ${WORKSPACE}/ALERT_NUM.csv
+							sleep 5
+						done
+
+					elif [ "$ATTACK_TOOL_TYPE" = "testssl" ]; then
+						cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read SINGLE_LINE_READ; do
+							FQDN_ONLY=$(echo ${SINGLE_LINE_READ} | awk -F[/:] '{print $4}')
+							sudo chmod 777 -R ${PWD}
+							ALERT_NUM=$(sudo docker run --rm -v `pwd`:/mnt --user=$(id -u):$(id -g) drwetter/testssl.sh --htmlfile=/mnt/report_${FQDN_ONLY}.html ${SINGLE_LINE_READ})
+							echo ${ALERT_NUM} >> ${WORKSPACE}/ALERT_NUM.csv
+							sleep 30
+						done
+
+					elif [ "$ATTACK_TOOL_TYPE" = "wapiti" ]; then
+						cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read SINGLE_LINE_READ; do
+							FQDN_ONLY=$(echo ${SINGLE_LINE_READ} | awk -F[/:] '{print $4}')
+							ALERT_NUM=$(sudo docker run --rm -i -v $(pwd):/root/.wapiti/generated_report jorgeandrada/wapiti "${SINGLE_LINE_READ}")
+							scp -r -q  ${WORKSPACE}/*.html ${WORKSPACE}/report_${FQDN_ONLY}.html
+							echo ${ALERT_NUM} >> ${WORKSPACE}/ALERT_NUM.csv
+						done
+
+					elif [ "$ATTACK_TOOL_TYPE" = "nuclei" ]; then
+
+						cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read SINGLE_LINE_READ; do
+								FQDN_ONLY=$(echo ${SINGLE_LINE_READ} | awk -F[/:] '{print $4}')
+
+								if [ "$SCAN_TYPE" = "AutoCollectedSubDomains_List" ]; then
+									ALERT_NUM=$(echo ${SINGLE_LINE_READ} | sudo docker run --rm -v $(pwd):/tmp -v $(pwd):/go/src/app/ -i projectdiscovery/nuclei -silent -o /tmp/report_${SINGLE_LINE_READ}.html)
+								else
+									ALERT_NUM=$(echo ${SINGLE_LINE_READ} | sudo docker run --rm -v $(pwd):/tmp -v $(pwd):/go/src/app/ -i projectdiscovery/nuclei -silent -o /tmp/report_${FQDN_ONLY}.html)
+								fi
+
+								echo ${ALERT_NUM} >> ${WORKSPACE}/ALERT_NUM.csv
+						done
+					else
+						echo "somthing went wrong..."
+					fi
+                    '''
+                }
+            }
+        }
+        
+        stage('Copying-Report-to-Workspace'){
+            steps {
+                script {
+                    sh label: '', script: ''' #!/bin/sh
+					sudo mkdir -p ${WORKSPACE}/report
+					if [ "$ATTACK_TOOL_TYPE" = "owazp_zap" ]; then
+						cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read SINGLE_LINE_READ; do
+							FQDN_ONLY=$(echo ${SINGLE_LINE_READ} | awk -F[/:] '{print $4}')
+							sudo docker cp owasp:/zap/wrk/report_${FQDN_ONLY}.html ${WORKSPACE}/report_${FQDN_ONLY}.html
+						done
+
+					else
+						echo "somthing went wrong..."
+					fi
+                    '''
+                }
+            }
+        }
+        
+        stage('Report-Uploading-To-Nexus'){
             steps {
                 withCredentials([usernamePassword(credentialsId: 'NexusCredID', passwordVariable: 'NexusPW', usernameVariable: 'NexusUN')]) {
                     script {
-                        sh '''
-                        Nexus_FQDN="https://nexus.example.com"
-                        Repository="KN_RRIVARE_RAW_REGISTRY"
-                        Nexus_Folder="OWASP_ZAP_Reports"
-                        zip -9jpr All_Reports.zip ${WORKSPACE}/*.html
-                        curl -u ${NexusUN}:${NexusPW} --upload-file ${WORKSPACE}/All_Reports.zip ${Nexus_FQDN}/repository/${Repository}/${Nexus_Folder}/
+                        sh label: '', script: ''' #!/bin/sh
+						Nexus_FQDN="https://nexus.example.com"
+						Repository="KN_RRIVARE_RAW_REGISTRY"
+						Nexus_Folder="OWASP_ZAP_Reports"
+
+						upload_nexus_function() {
+						if [ -s ${WORKSPACE}/ALERT_NUM.csv ]; then
+							echo "The Application is Not Secured"
+								cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read SINGLE_LINE_READ; do
+									FQDN_ONLY=$(echo ${SINGLE_LINE_READ} | awk -F[/:] '{print $4}')
+									if [ "$SCAN_TYPE" = "AutoCollectedSubDomains_List" ]; then
+										scp -r -q ${WORKSPACE}/report_${SINGLE_LINE_READ}.html ${WORKSPACE}/report_${SINGLE_LINE_READ}_${ATTACK_TOOL_TYPE}.html && sudo rm -rf ${WORKSPACE}/report_${SINGLE_LINE_READ}.html
+										curl -u ${NexusUN}:${NexusPW} --upload-file ${WORKSPACE}/report_${SINGLE_LINE_READ}_${ATTACK_TOOL_TYPE}.html ${Nexus_FQDN}/repository/${Repository}/${Nexus_Folder}/
+									else
+										scp -r -q ${WORKSPACE}/report_${FQDN_ONLY}.html ${WORKSPACE}/report_${FQDN_ONLY}_${ATTACK_TOOL_TYPE}.html && sudo rm -rf ${WORKSPACE}/report_${FQDN_ONLY}.html
+										curl -u ${NexusUN}:${NexusPW} --upload-file ${WORKSPACE}/report_${FQDN_ONLY}_${ATTACK_TOOL_TYPE}.html ${Nexus_FQDN}/repository/${Repository}/${Nexus_Folder}/
+									fi
+								done
+						else
+							echo "The Application is Secured"
+						fi
+							}
+
+						if [ "$ATTACK_TOOL_TYPE" = "owazp_zap" ]; then
+							if [ -s ${WORKSPACE}/ALERT_NUM.csv ]; then
+								upload_nexus_function ${ATTACK_TOOL_TYPE}
+							fi
+
+						elif [ "$ATTACK_TOOL_TYPE" = "testssl" ]; then
+							if [ -s ${WORKSPACE}/ALERT_NUM.csv ]; then
+								upload_nexus_function ${ATTACK_TOOL_TYPE}
+							fi
+						elif [ "$ATTACK_TOOL_TYPE" = "nikto" ]; then
+							if [ -s ${WORKSPACE}/ALERT_NUM.csv ]; then
+								upload_nexus_function ${ATTACK_TOOL_TYPE}
+							fi
+
+						elif [ "$ATTACK_TOOL_TYPE" = "sqlmap" ]; then
+							if [ -s ${WORKSPACE}/ALERT_NUM.csv ]; then
+								upload_nexus_function ${ATTACK_TOOL_TYPE}
+							fi
+
+						elif [ "$ATTACK_TOOL_TYPE" = "nmap" ]; then
+							if [ -s ${WORKSPACE}/ALERT_NUM.csv ]; then
+								upload_nexus_function ${ATTACK_TOOL_TYPE}
+							fi
+
+						elif [ "$ATTACK_TOOL_TYPE" = "owazp_nettacker" ]; then
+							if [ -s ${WORKSPACE}/ALERT_NUM.csv ]; then
+								upload_nexus_function ${ATTACK_TOOL_TYPE}
+							fi
+
+						elif [ "$ATTACK_TOOL_TYPE" = "wapiti" ]; then
+							if [ -s ${WORKSPACE}/ALERT_NUM.csv ]; then
+								upload_nexus_function ${ATTACK_TOOL_TYPE}
+							fi
+
+						elif [ "$ATTACK_TOOL_TYPE" = "nuclei" ]; then
+							if [ -s ${WORKSPACE}/ALERT_NUM.csv ]; then
+								upload_nexus_function ${ATTACK_TOOL_TYPE}
+							fi
+
+						else
+							echo "somthing went wrong..."
+						fi
+
+						#---------------------------(ZIP)----------------------
+						sed -i \'/^$/d\' ${WORKSPACE}/ALERT_NUM.csv
+						sudo zip -9jpr All_ZAP_Reports.zip ${WORKSPACE}/*.html
+						#------------------------------------------------------
+
+						cp ${WORKSPACE}/All_ZAP_Reports.zip ${WORKSPACE}/All_Pentest_Reports-$(date +%d-%b-%Y)-${SCAN_TYPE}.zip
+						curl -u ${NexusUN}:${NexusPW} --upload-file ${WORKSPACE}/All_Pentest_Reports-$(date +%d-%b-%Y)-${SCAN_TYPE}.zip ${Nexus_FQDN}/repository/${Repository}/${Nexus_Folder}/All_in_one/
                         '''
                     }
                 }
             }
         }
-
-        stage('Send Report Email') {
-            when { expression { params.GENERATE_REPORT } }
+        
+	stage('Report-Email-Sending') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'MailCredID', passwordVariable: 'MailPwVar', usernameVariable: 'MailUnIdVar')]) {
-                    script {
-                        sh '''
-                        python3 ${WORKSPACE}/pipeline-scripts/Security/Python/commonSmtpClient.py ${MailUnIdVar} ${MailPwVar} 'DAST' ${REPORTS_MAIL_SENDER} ${REPORTS_MAIL_RECIPIENT}
-                        '''
-                    }
+                script {
+					withCredentials([usernamePassword(credentialsId: 'MailCredID', passwordVariable: 'MailPwVar', usernameVariable: 'MailUnIdVar')]) {
+					sh label: '', script: '''#!/bin/bash
+					cd ${WORKSPACE}/
+					sudo chmod +x ${WORKSPACE}/pipeline-scripts/Security/Python/commonSmtpClient.py										
+					sudo python3 ${WORKSPACE}/pipeline-scripts/Security/Python/commonSmtpClient.py ${MailUnIdVar} ${MailPwVar} 'DAST' //${REPORTS_MAIL_SENDER} ${REPORTS_MAIL_RECIPIENT}	
+                    '''
+					}
                 }
             }
-        }
+        }   
     }
-
-    post {
+	
+	 post {
         always {
-            echo 'Cleaning up workspace and Docker containers...'
-            sh 'sudo docker rm owasp -f || true'
+            echo "Removing container"
+            sh label: '', script: '''#!/bin/bash
+			sudo docker rm owasp -f
+            '''
             cleanWs()
+        }
+        success {
+            echo 'The Pipeline has been successful executed...'
+        }
+        failure {
+            echo "Removing container"
+            sh label: '', script: '''#!/bin/bash
+			sudo docker rm owasp -f
+            '''
+            cleanWs()
+        }
+        unstable {
+            echo 'The Pipeline has been marked as unstable...'
+        }
+        changed {
+            echo 'The pipeline state has changed....'
         }
     }
 }
