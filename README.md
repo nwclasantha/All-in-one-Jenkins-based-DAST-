@@ -1,5 +1,9 @@
 # All in one Jenkins based Dynamic Application Security Testing Pipeline:
-This Jenkins pipeline script defines a complete security testing and report generation workflow with multiple stages and parameters. Here is a summary and some key points of the pipeline:
+This Jenkins pipeline script defines a complete security testing and report generation workflow with multiple stages and parameters. 
+
+# Use Case Diagram of the Script:
+
+![A3xuiVPwhEX8Kernpdh6r5](https://github.com/user-attachments/assets/ad567fb6-a956-4178-8141-cf58114db5cf)
 
 # Parameters:
 The pipeline allows users to choose the attack tool (ATTACK_TOOL_TYPE), scan type (SCAN_TYPE), target URL(s) (NEED_TO_SCAN_VARIABLE), and other options like API type and email settings for report generation.
