@@ -1,0 +1,150 @@
+pipeline {
+    options {
+        buildDiscarder(logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '1', numToKeepStr: '1'))
+    }
+    agent { label 'Jenkins_Agent_CL' }
+
+    parameters {
+        choice(choices: ["owasp_zap", "owasp_nettacker", "wapiti", "nikto", "nuclei", "sqlmap", "testssl", "nmap"], 
+               description: 'Type of main attack and issue detection tool', 
+               name: 'ATTACK_TOOL_TYPE')
+        choice(choices: ["Full", "Baseline", "APIS", "AutoCollectedSubDomains_List", "UserDefinedCatalog"], 
+               description: 'Type of scan that is going to be performed inside the container', 
+               name: 'SCAN_TYPE')
+        string(defaultValue: '', description: 'Target URLs to scan', name: 'NEED_TO_SCAN_VARIABLE', trim: true)
+        string(defaultValue: '', description: 'Subdomains identifier (only for AutoCollectedSubDomains_List)', name: 'SUB_DOMAINS_LOCATER_VARIABLE', trim: true)
+        choice(choices: ["openapi", "soap", "graphql"], description: 'OPTIONAL: API type (openapi, soap, graphql)', name: 'API_TYPE')
+        string(defaultValue: 'from_address@example.com', description: 'Sender email address', name: 'REPORTS_MAIL_SENDER', trim: true)
+        string(defaultValue: 'to_address@example.com', description: 'Recipient email address', name: 'REPORTS_MAIL_RECIPIENT', trim: true)
+        booleanParam(defaultValue: true, description: 'Generate report', name: 'GENERATE_REPORT')
+    }
+
+    stages {
+        stage('Pipeline Info') {
+            steps {
+                script {
+                    echo """
+                    Parameters:
+                    Scan Type: ${params.SCAN_TYPE}
+                    Target URL(s): ${params.NEED_TO_SCAN_VARIABLE}
+                    Generate Report: ${params.GENERATE_REPORT}
+                    """
+                }
+            }
+        }
+
+        stage('Setup Environment') {
+            parallel {
+                stage('Download Python Scripts') {
+                    steps {
+                        withCredentials([usernamePassword(credentialsId: 'CL_github_CredID', passwordVariable: 'CL_GL_PW_ID', usernameVariable: 'CL_GL_UN_ID')]) {
+                            script {
+                                sh '''
+                                sudo rm -rf ${WORKSPACE}/*
+                                git clone https://${CL_GL_UN_ID}:${CL_GL_PW_ID}@github.com/cl/pipeline-scripts.git
+                                cd ${WORKSPACE}/pipeline-scripts/
+                                git checkout master
+                                '''
+                            }
+                        }
+                    }
+                }
+                stage('Pull Docker Image') {
+                    steps {
+                        script {
+                            sh '''
+                            echo "Pulling OWASP ZAP container"
+                            sudo docker pull owasp/zap2docker-stable
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Prepare URL(s)') {
+            steps {
+                script {
+                    sh '''
+                    if [ "$SCAN_TYPE" = "AutoCollectedSubDomains_List" ]; then
+                        sudo docker run --rm -v $(pwd):/tmp -v $HOME/.config/subfinder:/root/.config/subfinder -t projectdiscovery/subfinder -d ${SUB_DOMAINS_LOCATER_VARIABLE} -o /tmp/URLS_Metadata_Catalogs_Need_to_Scan.csv
+                    else
+                        echo "${NEED_TO_SCAN_VARIABLE}" > ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv
+                    fi
+                    sed -i '/^$/d' ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv
+                    cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv
+                    '''
+                }
+            }
+        }
+
+        stage('Run Scan') {
+            parallel {
+                stage('OWASP ZAP Scan') {
+                    when { expression { params.ATTACK_TOOL_TYPE == 'owasp_zap' } }
+                    steps {
+                        script {
+                            sh '''
+                            sudo docker run --rm -dt --name owasp owasp/zap2docker-stable /bin/bash
+                            cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read url; do
+                                sudo docker exec owasp zap-baseline.py -t ${url} -r report_$(echo $url | awk -F[/:] '{print $4}').html -d -I -j
+                            done
+                            '''
+                        }
+                    }
+                }
+                stage('Nuclei Scan') {
+                    when { expression { params.ATTACK_TOOL_TYPE == 'nuclei' } }
+                    steps {
+                        script {
+                            sh '''
+                            cat ${WORKSPACE}/URLS_Metadata_Catalogs_Need_to_Scan.csv | while read url; do
+                                sudo docker run --rm -v $(pwd):/tmp -i projectdiscovery/nuclei -u ${url} -o /tmp/report_$(echo $url | awk -F[/:] '{print $4}').html
+                            done
+                            '''
+                        }
+                    }
+                }
+                // Add other tools (sqlmap, wapiti, etc.) similarly in parallel.
+            }
+        }
+
+        stage('Upload Reports to Nexus') {
+            when { expression { params.GENERATE_REPORT } }
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'NexusCredID', passwordVariable: 'NexusPW', usernameVariable: 'NexusUN')]) {
+                    script {
+                        sh '''
+                        Nexus_FQDN="https://nexus.example.com"
+                        Repository="KN_RRIVARE_RAW_REGISTRY"
+                        Nexus_Folder="OWASP_ZAP_Reports"
+                        zip -9jpr All_Reports.zip ${WORKSPACE}/*.html
+                        curl -u ${NexusUN}:${NexusPW} --upload-file ${WORKSPACE}/All_Reports.zip ${Nexus_FQDN}/repository/${Repository}/${Nexus_Folder}/
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Send Report Email') {
+            when { expression { params.GENERATE_REPORT } }
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'MailCredID', passwordVariable: 'MailPwVar', usernameVariable: 'MailUnIdVar')]) {
+                    script {
+                        sh '''
+                        python3 ${WORKSPACE}/pipeline-scripts/Security/Python/commonSmtpClient.py ${MailUnIdVar} ${MailPwVar} 'DAST' ${REPORTS_MAIL_SENDER} ${REPORTS_MAIL_RECIPIENT}
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Cleaning up workspace and Docker containers...'
+            sh 'sudo docker rm owasp -f || true'
+            cleanWs()
+        }
+    }
+}
