@@ -37,6 +37,8 @@ Uploads the reports to a Nexus repository.
 # Report-Email-Sending: 
 Sends the generated report to a specified email address using a custom SMTP Python script.
 
+![JXRAoejbxJpU2tvC3mXzVy](https://github.com/user-attachments/assets/4df0bd9c-887e-4b2c-9adf-20e41a9b65a5)
+
 # Post Actions:
 1. The pipeline includes cleanup steps (always, failure, success) that ensure the Docker container is removed and the workspace is cleaned.
 2. It has status reporting for success, failure, unstable, and changed pipeline states.
